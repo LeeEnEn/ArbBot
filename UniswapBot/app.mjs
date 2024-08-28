@@ -33,6 +33,7 @@ async function main() {
 
     const amountIn = process.env.AMOUNT_IN
     const workerCount = process.env.WORKER_COUNT
+    const threshold = process.env.THRESHOLD
 
     if (isMainThread) {
         let contents = fileRW.getContents()
@@ -40,7 +41,7 @@ async function main() {
         let readablePath = contents[1]
 
         const __filename = fileURLToPath(import.meta.url)
-        const amount = parseInt(paths.length / workerCount)
+        const amount = Math.ceil(paths.length / workerCount)
 
         for (let i = 0; i < workerCount; i++) {
             new Worker(__filename, { 
@@ -56,10 +57,10 @@ async function main() {
         let paths = workerData[1]
         let readablePath = workerData[2]
 
-        console.log("Starting worker", workerId)
+        console.log("Starting worker", workerId, "with", paths.length, "paths...")
 
         while (true) {
-			console.time("Time taken for " + workerId)
+			console.time("Time taken" + workerId)
             for (let i = 0; i < paths.length; i++) {
                 try {
                     const pathArray = gq.getPathArray(readablePath[i].length - 1)
@@ -71,20 +72,18 @@ async function main() {
                                 ),
                                 ethers.utils.parseUnits(amountIn.toString(), "18"),
                             ), 18
-                        ) * (0.9975 ** (readablePath[i].length)) * 0.99
+                        ) * (0.9975 ** (readablePath[i].length)) * (1 - threshold)
                 
                     if (quoteValue > amountIn) {
                         console.log(readablePath[i], quoteValue)
                         swap(wallet, paths[i], amountIn, quoteValue)
                     }
-                    if (i == 0) {
-                        console.log("Worker", workerId, "still searching...")
-                    }
                 } catch(err) {
-    
+                    console.log(err)
+                    process.exit()
                 }
             }
-			console.timeEnd("Time taken for " + workerId)
+			console.timeEnd("Time taken" + workerId)
         }
     }	
 };
@@ -92,7 +91,7 @@ async function main() {
 async function swap(wallet, path, amountIn, expectedAmount) {
     const SWAP_ROUTER = '0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45'
     const UniswapRouterABI = JSON.parse(
-        fs.readFileSync('src/SwapRouterABI.json')
+        fs.readFileSync('UniswapBot/SwapRouterABI.json')
     )
     let swapContract = new ethers.Contract(
         SWAP_ROUTER,
