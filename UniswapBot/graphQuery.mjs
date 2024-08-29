@@ -113,8 +113,6 @@ export default class GraphQuery {
                 }
     
                 await Promise.all([this.#updateTokenPairs(token0, token1, fee), this.#updateTokenPairs(token1, token0, fee)])
-                // await this.#updateTokenPairs(token0, token1, fee)
-                // await this.#updateTokenPairs(token1, token0, fee)
             }
         }
     }
@@ -140,7 +138,7 @@ export default class GraphQuery {
      * Add token pairing details
      * @param {string} token0 - First token
      * @param {string} token1 - Second token
-     * @param {string} fee - Liquidity pool's fee
+     * @param {string} fee    - Liquidity pool's fee
      */
     async #updateTokenPairs(token0, token1, fee) {
         let tokenPairs = this.#uniswapPools.get(token0["id"]).get("tokenPairs")
@@ -153,6 +151,14 @@ export default class GraphQuery {
         }
     }
 
+    /**
+     * 
+     * @param {HashMap} token0 - Details of token0
+     * @param {HashMap} token1 - Details of token1
+     * @param {string} fee     - Liquidity pool's fee
+     * @param {string} poolId  - Liquidity pool's contract address
+     * @returns A boolean stating if liquidity pool found matches requirements
+     */
     async #poolMeetsRequirements(token0, token1, fee, poolId) {
         try {
             // If pool exist
@@ -236,7 +242,7 @@ export default class GraphQuery {
 
     /**
      * 
-     * @param {int} hopCount - Number of pool swaps
+     * @param {int} hopCount            - Number of pool swaps
      * @param {array[string]} tokenPath - The list of different tokens and their pool 
      *                                    fee in which the token is being swapped to 
      * @returns An array which contains all possible paths
@@ -315,7 +321,7 @@ export default class GraphQuery {
 
     /**
      * 
-     * @param {array[string]} paths 
+     * @param {array[string]} paths - An array consisting of paths
      * @returns An array using with token identifiers if paths have been built
      */
     getReadablePaths(paths) {
