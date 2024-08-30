@@ -39,6 +39,7 @@ async function main() {
     const amountIn = process.env.AMOUNT_IN
     const workerCount = process.env.WORKER_COUNT
     const threshold = process.env.THRESHOLD
+    const slippage = process.env.SLIPPAGE
 
     if (isMainThread) {
         let contents = fileRW.getContents()
@@ -77,9 +78,9 @@ async function main() {
                                 ),
                                 ethers.utils.parseUnits(amountIn.toString(), "18"),
                             ), 18
-                        ) * (0.9975 ** (readablePath[i].length)) * (1 - threshold)
+                        ) * (0.9975 ** (readablePath[i].length)) * (1 - slippage)
                 
-                    if (quoteValue > amountIn) {
+                    if (quoteValue > amountIn * (1 + threshold)) {
                         console.log(readablePath[i], quoteValue)
                         swap(wallet, paths[i], amountIn, quoteValue)
                     }
