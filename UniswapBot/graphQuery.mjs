@@ -10,28 +10,25 @@ export default class GraphQuery {
     #hopCount
     #startToken
     
-    ethContract
+    ABI
     quoterContract
+    RPC
 
     constructor() {
         dotenv.config()
         this.#hopCount = process.env.HOP_COUNT
         this.#startToken = process.env.START_TOKEN
         this.#apiKey = process.env.GRAPH_API_KEY
-
+        this.RPC = new ethers.providers.JsonRpcProvider(process.env.RPC)
         this.quoterContract = new ethers.Contract(
             '0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6',
             JSON.parse(
                 fs.readFileSync('../node_modules/@uniswap/v3-periphery/artifacts/contracts/lens/Quoter.sol/Quoter.json', 'utf-8')
             )["abi"],
-            new ethers.providers.JsonRpcProvider(process.env.RPC)
+            this.RPC
         )
-        this.ethContract = new ethers.Contract(
-            '0x82aF49447D8a07e3bd95BD0d56f35241523fBab1',
-            JSON.parse(
-                fs.readFileSync('UniswapBot/ERC20ABI.json', 'utf-8')
-            ),
-            new ethers.providers.JsonRpcProvider(process.env.RPC)
+        this.ABI = JSON.parse(
+            fs.readFileSync('UniswapBot/ERC20ABI.json', 'utf-8')
         )
     }
 
@@ -41,6 +38,7 @@ export default class GraphQuery {
      */
     async #initUniswapPools(errorCount=1) {
         const size = 100
+        const iteration = 5
         const endpoint = 'https://gateway-arbitrum.network.thegraph.com/api/'
             + this.#apiKey
             + '/subgraphs/id/FQ6JYszEKApsBpAmiHesRsd9Ygc6mzmpNRANeVQFYoVX';
@@ -56,7 +54,8 @@ export default class GraphQuery {
             console.log("Fetching data from TheGraph...")
         }
 
-        for (let i = 0; i < 5; i++) {
+        for (let i = 0; i < iteration; i++) {
+            console.log("Querying percentage:", i * 100 / iteration)
             const query = `
                 {
                     liquidityPools(first:` + size * (i + 1) + `, 
@@ -73,6 +72,7 @@ export default class GraphQuery {
                             name
                             symbol
                             decimals
+                            lastPriceUSD
                         }
                     }
                 }`
@@ -112,8 +112,7 @@ export default class GraphQuery {
                     this.#createTokenDetails(token1)
                 }
     
-                await this.#updateTokenPairs(token0, token1, fee)
-                await this.#updateTokenPairs(token1, token0, fee)
+                await Promise.all([this.#updateTokenPairs(token0, token1, fee), this.#updateTokenPairs(token1, token0, fee)])
             }
         }
     }
@@ -139,7 +138,7 @@ export default class GraphQuery {
      * Add token pairing details
      * @param {string} token0 - First token
      * @param {string} token1 - Second token
-     * @param {string} fee - Liquidity pool's fee
+     * @param {string} fee    - Liquidity pool's fee
      */
     async #updateTokenPairs(token0, token1, fee) {
         let tokenPairs = this.#uniswapPools.get(token0["id"]).get("tokenPairs")
@@ -152,8 +151,17 @@ export default class GraphQuery {
         }
     }
 
+    /**
+     * 
+     * @param {HashMap} token0 - Details of token0
+     * @param {HashMap} token1 - Details of token1
+     * @param {string} fee     - Liquidity pool's fee
+     * @param {string} poolId  - Liquidity pool's contract address
+     * @returns A boolean stating if liquidity pool found matches requirements
+     */
     async #poolMeetsRequirements(token0, token1, fee, poolId) {
         try {
+            // If pool exist
             await this.quoterContract.callStatic.quoteExactInput(
                 ethers.utils.solidityPack(
                     ["address", "uint24", "address"],
@@ -162,12 +170,26 @@ export default class GraphQuery {
                 ethers.utils.parseUnits("1", "18"),
             )
 
-            if (token0["id"] == this.#startToken || token1["id"] == this.#startToken) {
-                if (ethers.utils.formatEther(await this.ethContract.balanceOf(poolId)) < 1) {
-                    return false
-                }
+            // Liquidity of pool > 1000
+            const token0Promise = new ethers.Contract(
+                token0["id"],
+                this.ABI,
+                this.RPC
+            ).balanceOf(poolId)
+
+            const token1Promise = new ethers.Contract(
+                token1["id"],
+                this.ABI,
+                this.RPC
+            ).balanceOf(poolId)
+
+            const [v0, v1] = await Promise.all([token0Promise, token1Promise])
+            const valueOfToken0InPool = ethers.utils.formatUnits(v0, token0["decimals"]) * token0["lastPriceUSD"]
+            const valueOfToken1InPool = ethers.utils.formatUnits(v1, token1["decimals"]) * token1["lastPriceUSD"]
+
+            if (valueOfToken0InPool + valueOfToken1InPool < 1000) {                
+                return false
             }
-            
             return true
         } catch (error) {
             return false
@@ -211,6 +233,7 @@ export default class GraphQuery {
                 counter += 1
             }
             console.log("Generated successfully! Total number of token hops:", (result.flat(1)).length)
+            console.timeEnd("Time to fetch data")
             return result.flat(1)
         }
         console.timeEnd("Time to fetch data")
@@ -219,7 +242,7 @@ export default class GraphQuery {
 
     /**
      * 
-     * @param {int} hopCount - Number of pool swaps
+     * @param {int} hopCount            - Number of pool swaps
      * @param {array[string]} tokenPath - The list of different tokens and their pool 
      *                                    fee in which the token is being swapped to 
      * @returns An array which contains all possible paths
@@ -298,7 +321,7 @@ export default class GraphQuery {
 
     /**
      * 
-     * @param {array[string]} paths 
+     * @param {array[string]} paths - An array consisting of paths
      * @returns An array using with token identifiers if paths have been built
      */
     getReadablePaths(paths) {

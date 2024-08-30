@@ -7,6 +7,11 @@ import fs from 'fs'
 import ethers from 'ethers'
 import dotenv from 'dotenv'
 
+/**
+ * This function first tries to obtain all possible swap paths found in Uniswap Arbitrum L2.
+ * Thereafter, spawning mulitple worker threads to loop through each path to find the one that
+ * matches 
+ */
 async function main() {
     dotenv.config()
 
@@ -34,6 +39,7 @@ async function main() {
     const amountIn = process.env.AMOUNT_IN
     const workerCount = process.env.WORKER_COUNT
     const threshold = process.env.THRESHOLD
+    const slippage = process.env.SLIPPAGE
 
     if (isMainThread) {
         let contents = fileRW.getContents()
@@ -60,7 +66,7 @@ async function main() {
         console.log("Starting worker", workerId, "with", paths.length, "paths...")
 
         while (true) {
-			console.time("Time taken" + workerId)
+			console.time("Time taken " + workerId)
             for (let i = 0; i < paths.length; i++) {
                 try {
                     const pathArray = gq.getPathArray(readablePath[i].length - 1)
@@ -72,9 +78,9 @@ async function main() {
                                 ),
                                 ethers.utils.parseUnits(amountIn.toString(), "18"),
                             ), 18
-                        ) * (0.9975 ** (readablePath[i].length)) * (1 - threshold)
+                        ) * (0.9975 ** (readablePath[i].length)) * (1 - slippage)
                 
-                    if (quoteValue > amountIn) {
+                    if (quoteValue > amountIn * (1 + threshold)) {
                         console.log(readablePath[i], quoteValue)
                         swap(wallet, paths[i], amountIn, quoteValue)
                     }
@@ -83,11 +89,18 @@ async function main() {
                     process.exit()
                 }
             }
-			console.timeEnd("Time taken" + workerId)
+			console.timeEnd("Time taken " + workerId)
         }
     }	
 };
 
+/**
+ * 
+ * @param {ethers.Wallet} wallet  - User wallet 
+ * @param {array[string]} path    - Specified path
+ * @param {Number} amountIn       - Amount used as input
+ * @param {Number} expectedAmount - Amount used as output
+ */
 async function swap(wallet, path, amountIn, expectedAmount) {
     const SWAP_ROUTER = '0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45'
     const UniswapRouterABI = JSON.parse(
@@ -127,6 +140,11 @@ async function swap(wallet, path, amountIn, expectedAmount) {
     }
 }
 
+/**
+ * 
+ * @param {array[string]} path - Specified path 
+ * @returns A string with addresses and fees in hexadecimal
+ */
 function getHexPath(path) {
 	let result = '0x'
 	
