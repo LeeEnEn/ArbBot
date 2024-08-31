@@ -4,8 +4,8 @@ const {} = require('dotenv').config()
 class FileRW {
     #filePath
 
-    constructor() {
-        this.#filePath = process.env.FILE_PATH
+    constructor(filePath) {
+        this.#filePath = filePath
     }
 
     writeContents(path, readablePath, isAppend) {
