@@ -2,87 +2,56 @@ import request from 'graphql-request';
 import ethers from 'ethers'
 import dotenv from 'dotenv';
 import HashMap from 'hashmap';
-import fs from 'fs'
 
 export default class GraphQuery {
     #uniswapPools = new HashMap()
-    #apiKey
-    #hopCount
-    #startToken
     
-    ABI
-    quoterContract
-    RPC
-
-    constructor() {
+    #ERC20ABI
+    #HOP_COUNT
+    #PROVIDER
+    #QUOTER_CONTRACT
+    #START_TOKEN
+    
+    constructor(provider, quoterContract, ERC20ABI) {
         dotenv.config()
-        this.#hopCount = process.env.HOP_COUNT
-        this.#startToken = process.env.START_TOKEN
-        this.#apiKey = process.env.GRAPH_API_KEY
-        this.RPC = new ethers.providers.JsonRpcProvider(process.env.RPC)
-        this.quoterContract = new ethers.Contract(
-            '0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6',
-            JSON.parse(
-                fs.readFileSync('../node_modules/@uniswap/v3-periphery/artifacts/contracts/lens/Quoter.sol/Quoter.json', 'utf-8')
-            )["abi"],
-            this.RPC
-        )
-        this.ABI = JSON.parse(
-            fs.readFileSync('UniswapBot/ERC20ABI.json', 'utf-8')
-        )
+        this.#HOP_COUNT = process.env.HOP_COUNT
+        this.#START_TOKEN = process.env.START_TOKEN
+        this.#PROVIDER = provider
+        this.#QUOTER_CONTRACT = quoterContract
+        this.#ERC20ABI = ERC20ABI
     }
 
     /**
      * 
-     * @returns A hashmap that contains all token pairs
+     * @param {Number} errorCount - Number of errors that has occured
+     * @param {String} endpoint   - TheGraph end point 
+     * @param {Function} queryFn  - Function that returns a query
      */
-    async #initUniswapPools(errorCount=1) {
-        const size = 100
-        const iteration = 5
-        const endpoint = 'https://gateway-arbitrum.network.thegraph.com/api/'
-            + this.#apiKey
-            + '/subgraphs/id/FQ6JYszEKApsBpAmiHesRsd9Ygc6mzmpNRANeVQFYoVX';
+    async #initUniswapPools(endpoint, queryFn, errorCount=0) {
+        const size = 10
+        const iteration = 3
 
-        if (errorCount == 4) {
+        if (errorCount == 3) {
             console.log("Failed to fetch data! Exiting program.")
             process.exit()
         }
-        if (errorCount >= 2) {
-            console.log("Attempting to fetch data again...", errorCount, "of 3 attempts")
+        if (errorCount >= 1) {
+            console.log("Attempting to fetch data again...", errorCount + 1, "of 3 attempts")
             this.#uniswapPools = new HashMap()
         } else {
             console.log("Fetching data from TheGraph...")
         }
 
         for (let i = 0; i < iteration; i++) {
-            console.log("Querying percentage:", i * 100 / iteration)
-            const query = `
-                {
-                    liquidityPools(first:` + size * (i + 1) + `, 
-                                orderBy: cumulativeSwapCount,
-                                orderDirection: desc,
-                                skip:` + size * i + `)
-                    {
-                        id
-                        fees {
-                            feePercentage
-                        }
-                        inputTokens {
-                            id
-                            name
-                            symbol
-                            decimals
-                            lastPriceUSD
-                        }
-                    }
-                }`
+            console.log("Querying percentage:", Math.round(i * 100 / iteration, 2))
+            const query = queryFn(i, size)
             try {
                 const data = await request(endpoint, query);
                 await this.#processData(data)
             } catch (error) {
                 console.log('Error fetching data!');
                 console.log(error)
-                await this.#initUniswapPools(++errorCount)
+                await this.#initUniswapPools(endpoint, queryFn, ++errorCount)
             }
         }
         console.log("Data sucessfully fetched!")
@@ -111,7 +80,6 @@ export default class GraphQuery {
                 if (!this.#uniswapPools.has(token1["id"])) {
                     this.#createTokenDetails(token1)
                 }
-    
                 await Promise.all([this.#updateTokenPairs(token0, token1, fee), this.#updateTokenPairs(token1, token0, fee)])
             }
         }
@@ -160,9 +128,10 @@ export default class GraphQuery {
      * @returns A boolean stating if liquidity pool found matches requirements
      */
     async #poolMeetsRequirements(token0, token1, fee, poolId) {
+        
         try {
             // If pool exist
-            await this.quoterContract.callStatic.quoteExactInput(
+            await this.#QUOTER_CONTRACT.callStatic.quoteExactInput(
                 ethers.utils.solidityPack(
                     ["address", "uint24", "address"],
                     [token0["id"], fee, token1["id"]]
@@ -173,14 +142,14 @@ export default class GraphQuery {
             // Liquidity of pool > 1000
             const token0Promise = new ethers.Contract(
                 token0["id"],
-                this.ABI,
-                this.RPC
+                this.#ERC20ABI,
+                this.#PROVIDER
             ).balanceOf(poolId)
 
             const token1Promise = new ethers.Contract(
                 token1["id"],
-                this.ABI,
-                this.RPC
+                this.#ERC20ABI,
+                this.#PROVIDER
             ).balanceOf(poolId)
 
             const [v0, v1] = await Promise.all([token0Promise, token1Promise])
@@ -198,31 +167,17 @@ export default class GraphQuery {
 
     /**
      * 
-     * @returns An array which contains all possible paths of default hop length
-     */
-    async getPaths() {
-        await this.#initUniswapPools()
-
-        if (this.#uniswapPools != null) {
-            let tokenPath = [this.#startToken]
-            return this.#getArbPathHelper(this.#hopCount, tokenPath).flat(this.#hopCount - 1)
-        }
-        return []
-    }
-
-    /**
-     * 
      * @param {int} hopCount - Upper limit on the number of hops
      * @returns An array which contains all possible paths of 1 to N hop lengths
      */
-    async getMultipleHopPaths(hopCount = this.#hopCount) {
+    async getMultipleHopPaths(graphEndPoint, queryFn, hopCount = this.#HOP_COUNT) {
         console.time("Time to fetch data")
-        await this.#initUniswapPools()
+        await this.#initUniswapPools(graphEndPoint, queryFn)
 		
         if (this.#uniswapPools != null) { 
             console.log("Generating permutations...")
             let counter = 1
-            let tokenPath = [this.#startToken]
+            let tokenPath = [this.#START_TOKEN]
             let result = []
 
             while (counter < hopCount) {

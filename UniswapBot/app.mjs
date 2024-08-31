@@ -1,5 +1,5 @@
-import GraphQuery from './graphQuery.mjs'
-import FileRW from './fileRW.js'
+import GraphQuery from '../graphQuery.mjs'
+import FileRW from '../fileRW.js'
 
 import { isMainThread, workerData, Worker } from 'worker_threads'
 import { fileURLToPath } from 'url';
@@ -15,31 +15,31 @@ import dotenv from 'dotenv'
 async function main() {
     dotenv.config()
 
-    const provider = new ethers.providers.JsonRpcProvider(process.env.RPC)
-    const wallet = new ethers.Wallet(process.env.PRIVATE_KEY).connect(provider)
+    const PROVIDER = new ethers.providers.JsonRpcProvider(process.env.RPC)
+    const WALLET = new ethers.Wallet(process.env.PRIVATE_KEY).connect(PROVIDER)
     const QUOTER = '0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6'
-    const QuoterABI = JSON.parse(
-        fs.readFileSync('../node_modules/@uniswap/v3-periphery/artifacts/contracts/lens/Quoter.sol/Quoter.json', 'utf-8')
-    )["abi"]
-    const quoterContract = new ethers.Contract(
+    const QUOTER_ABI = JSON.parse(fs.readFileSync('../node_modules/@uniswap/v3-periphery/artifacts/contracts/lens/Quoter.sol/Quoter.json', 'utf-8'))["abi"]
+    const QUOTER_CONTRACT = new ethers.Contract(
         QUOTER,
-        QuoterABI,
-        new ethers.providers.JsonRpcProvider(process.env.RPC)
+        QUOTER_ABI,
+        PROVIDER
     )
+    const FILEPATH = process.env.UNISWAP_BOT_FILE_PATH
+    const ERC20ABI = JSON.parse(fs.readFileSync("ERC20ABI.json", "utf-8"))
 
-    let gq = new GraphQuery()
-    let fileRW = new FileRW()
+    let gq = new GraphQuery(PROVIDER, QUOTER_CONTRACT, ERC20ABI)
+    let fileRW = new FileRW(FILEPATH)
 
 	if (!fileRW.isFileExist()) {
-        let paths = await gq.getMultipleHopPaths()
+        let paths = await gq.getMultipleHopPaths(getGraphEndPoint(), getQueryFn)
 		let readablePath = gq.getReadablePaths(paths)
 		fileRW.writeContents(paths, readablePath, true)
 	}
 
-    const amountIn = process.env.AMOUNT_IN
-    const workerCount = process.env.WORKER_COUNT
-    const threshold = process.env.THRESHOLD
-    const slippage = process.env.SLIPPAGE
+    const AMOUNT_IN = process.env.AMOUNT_IN
+    const WORKER_COUNT = process.env.WORKER_COUNT
+    const THRESHOLD = process.env.THRESHOLD
+    const SLIPPAGE = process.env.SLIPPAGE
 
     if (isMainThread) {
         let contents = fileRW.getContents()
@@ -47,14 +47,14 @@ async function main() {
         let readablePath = contents[1]
 
         const __filename = fileURLToPath(import.meta.url)
-        const amount = Math.ceil(paths.length / workerCount)
+        const DATA_PER_WORKER = Math.ceil(paths.length / WORKER_COUNT)
 
-        for (let i = 0; i < workerCount; i++) {
+        for (let i = 0; i < WORKER_COUNT; i++) {
             new Worker(__filename, { 
                 workerData: 
                     [i, 
-                    paths.slice(i * amount, (i + 1) * amount), 
-                    readablePath.slice(i * amount, (i + 1) * amount)]
+                    paths.slice(i * DATA_PER_WORKER, (i + 1) * DATA_PER_WORKER), 
+                    readablePath.slice(i * DATA_PER_WORKER, (i + 1) * DATA_PER_WORKER)]
                 }
             )
         }
@@ -71,18 +71,18 @@ async function main() {
                 try {
                     const pathArray = gq.getPathArray(readablePath[i].length - 1)
                     const quoteValue = ethers.utils.formatUnits(
-                        await quoterContract.callStatic.quoteExactInput(
+                        await QUOTER_CONTRACT.callStatic.quoteExactInput(
                             ethers.utils.solidityPack(
                                     pathArray, 
                                     paths[i]            
                                 ),
-                                ethers.utils.parseUnits(amountIn.toString(), "18"),
+                                ethers.utils.parseUnits(AMOUNT_IN.toString(), "18"),
                             ), 18
-                        ) * (0.9975 ** (readablePath[i].length)) * (1 - slippage)
+                        ) * (0.9975 ** (readablePath[i].length)) * (1 - SLIPPAGE)
                 
-                    if (quoteValue > amountIn * (1 + threshold)) {
+                    if (quoteValue > AMOUNT_IN * (1 + THRESHOLD)) {
                         console.log(readablePath[i], quoteValue)
-                        swap(wallet, paths[i], amountIn, quoteValue)
+                        swap(WALLET, paths[i], AMOUNT_IN, quoteValue)
                     }
                 } catch(err) {
                     console.log(err)
@@ -103,27 +103,25 @@ async function main() {
  */
 async function swap(wallet, path, amountIn, expectedAmount) {
     const SWAP_ROUTER = '0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45'
-    const UniswapRouterABI = JSON.parse(
-        fs.readFileSync('UniswapBot/SwapRouterABI.json')
-    )
-    let swapContract = new ethers.Contract(
+    const UNISWAP_ROUTER_ABI = JSON.parse(fs.readFileSync('UniswapBot/SwapRouterABI.json', 'utf-8'))
+    const SWAP_CONTRACT = new ethers.Contract(
         SWAP_ROUTER,
-        UniswapRouterABI,
+        UNISWAP_ROUTER_ABI,
         wallet
     )
 	
-    const data = getHexPath(path)
-    const deadline = Math.floor(Date.now() / 1000) + 60 * 1
-    const recipient = wallet.getWalletAddress()
+    const HEX_DATA = getHexPath(path)
+    const DEADLINE = Math.floor(Date.now() / 1000) + 60 * 1
+    const WALLET_ADDRESS = wallet.getWalletAddress()
 	
 	amountIn = ethers.utils.parseUnits(amountIn.toString(), 18)
 	
     try {
         const tx = await swapContract.exactInput(
 			{
-				path: data,
-				recipient: recipient,
-				deadline: deadline,
+				path: HEX_DATA,
+				recipient: WALLET_ADDRESS,
+				deadline: DEADLINE,
 				amountIn: amountIn,
 				amountOutMinimum: parseInt(expectedAmount * 10 ** 18),
 			},
@@ -159,4 +157,33 @@ function getHexPath(path) {
 	return result
 }
 
-main();
+function getGraphEndPoint() {
+    return `https://gateway-arbitrum.network.thegraph.com/api/${process.env.GRAPH_API_KEY}` +
+        `/subgraphs/id/FQ6JYszEKApsBpAmiHesRsd9Ygc6mzmpNRANeVQFYoVX`
+}
+
+function getQueryFn(iteration, size) {
+    return `
+    {
+        liquidityPools(
+            first: ${size * (iteration + 1)}, 
+            orderBy: cumulativeSwapCount,
+            orderDirection: desc,
+            skip: ${size * iteration}
+        ){
+        id
+        fees {
+            feePercentage
+        }
+        inputTokens {
+            id
+            name
+            symbol
+            decimals
+            lastPriceUSD
+            }
+        }
+    }`
+}
+
+main()
