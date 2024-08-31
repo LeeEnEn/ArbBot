@@ -28,8 +28,8 @@ export default class GraphQuery {
      * @param {Function} queryFn  - Function that returns a query
      */
     async #initUniswapPools(endpoint, queryFn, errorCount=0) {
-        const size = 10
-        const iteration = 3
+        const size = 100
+        const iteration = 5
 
         if (errorCount == 3) {
             console.log("Failed to fetch data! Exiting program.")
