@@ -1,5 +1,5 @@
-import GraphQuery from '../graphQuery.mjs'
-import FileRW from '../fileRW.js'
+import GraphQuery from '../common/graphQuery.mjs'
+import FileRW from '../common/fileRW.js'
 
 import { isMainThread, workerData, Worker } from 'worker_threads'
 import { fileURLToPath } from 'url';
@@ -25,7 +25,7 @@ async function main() {
         PROVIDER
     )
     const FILEPATH = process.env.UNISWAP_BOT_FILE_PATH
-    const ERC20ABI = JSON.parse(fs.readFileSync("ERC20ABI.json", "utf-8"))
+    const ERC20ABI = JSON.parse(fs.readFileSync("common/ERC20ABI.json", "utf-8"))
 
     let gq = new GraphQuery(PROVIDER, QUOTER_CONTRACT, ERC20ABI)
     let fileRW = new FileRW(FILEPATH)
@@ -86,6 +86,9 @@ async function main() {
                     }
                 } catch(err) {
                     console.log(err)
+                    if (err.get("reason") == "timeout") {
+                        console.log("\n\ntimeout!!\n\n")
+                    }
                     process.exit()
                 }
             }
