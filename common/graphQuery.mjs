@@ -2,6 +2,7 @@ import request from 'graphql-request';
 import ethers from 'ethers'
 import dotenv from 'dotenv';
 import HashMap from 'hashmap';
+import fs from 'fs'
 
 export default class GraphQuery {
     #uniswapPools = new HashMap()
@@ -12,13 +13,13 @@ export default class GraphQuery {
     #QUOTER_CONTRACT
     #START_TOKEN
     
-    constructor(provider, quoterContract, ERC20ABI) {
+    constructor(provider, quoterContract) {
         dotenv.config()
         this.#HOP_COUNT = process.env.HOP_COUNT
         this.#START_TOKEN = process.env.START_TOKEN
         this.#PROVIDER = provider
         this.#QUOTER_CONTRACT = quoterContract
-        this.#ERC20ABI = ERC20ABI
+        this.#ERC20ABI = JSON.parse(fs.readFileSync("common/ERC20ABI.json", "utf-8"))
     }
 
     /**
@@ -27,7 +28,7 @@ export default class GraphQuery {
      * @param {String} endpoint   - TheGraph end point 
      * @param {Function} queryFn  - Function that returns a query
      */
-    async #initUniswapPools(endpoint, queryFn, errorCount=0) {
+    async #initSwapPools(endpoint, queryFn, errorCount=0) {
         const size = 100
         const iteration = 5
 
@@ -51,7 +52,7 @@ export default class GraphQuery {
             } catch (error) {
                 console.log('Error fetching data!');
                 console.log(error)
-                await this.#initUniswapPools(endpoint, queryFn, ++errorCount)
+                await this.#initSwapPools(endpoint, queryFn, ++errorCount)
             }
         }
         console.log("Data sucessfully fetched!")
@@ -170,9 +171,9 @@ export default class GraphQuery {
      * @param {int} hopCount - Upper limit on the number of hops
      * @returns An array which contains all possible paths of 1 to N hop lengths
      */
-    async getMultipleHopPaths(graphEndPoint, queryFn, hopCount = this.#HOP_COUNT) {
+    async generatePermutations(graphEndPoint, queryFn, hopCount=this.#HOP_COUNT) {
         console.time("Time to fetch data")
-        await this.#initUniswapPools(graphEndPoint, queryFn)
+        await this.#initSwapPools(graphEndPoint, queryFn)
 		
         if (this.#uniswapPools != null) { 
             console.log("Generating permutations...")
@@ -181,7 +182,7 @@ export default class GraphQuery {
             let result = []
 
             while (counter < hopCount) {
-                let path = this.#getArbPathHelper(counter, tokenPath).flat(counter - 1)
+                let path = this.#permutationHelper(counter, tokenPath).flat(counter - 1)
                 if (path.length != 0) {
                     result.push(path)
                 }
@@ -202,7 +203,7 @@ export default class GraphQuery {
      *                                    fee in which the token is being swapped to 
      * @returns An array which contains all possible paths
      */
-    #getArbPathHelper(hopCount, tokenPath) {
+    #permutationHelper(hopCount, tokenPath) {
         let prevHopToken = tokenPath[tokenPath.length - 1]
         let paths = []
 
@@ -250,7 +251,7 @@ export default class GraphQuery {
                     let nextTokenPath = structuredClone(tokenPath)
                     nextTokenPath.push(fee, token1CA)
 
-                    let result = this.#getArbPathHelper(hopCount - 1, nextTokenPath)
+                    let result = this.#permutationHelper(hopCount - 1, nextTokenPath)
                     if (result.length != 0) {
                         paths.push(result)
                     }
