@@ -164,7 +164,7 @@ function getQueryFn(iteration, size) {
     return `
     {
         liquidityPools(
-            first: ${size * (iteration + 1)}, 
+            first: ${size}, 
             orderBy: cumulativeSwapCount,
             orderDirection: desc,
             skip: ${size * iteration}
