@@ -1,5 +1,5 @@
-import GraphQuery from '../graphQuery.mjs'
-import FileRW from '../fileRW.js'
+import GraphQuery from '../common/graphQuery.mjs'
+import FileRW from '../common/fileRW.js'
 
 import { isMainThread, workerData, Worker } from 'worker_threads'
 import { fileURLToPath } from 'url';
@@ -25,13 +25,12 @@ async function main() {
         PROVIDER
     )
     const FILEPATH = process.env.UNISWAP_BOT_FILE_PATH
-    const ERC20ABI = JSON.parse(fs.readFileSync("ERC20ABI.json", "utf-8"))
 
-    let gq = new GraphQuery(PROVIDER, QUOTER_CONTRACT, ERC20ABI)
+    let gq = new GraphQuery(PROVIDER, QUOTER_CONTRACT)
     let fileRW = new FileRW(FILEPATH)
 
 	if (!fileRW.isFileExist()) {
-        let paths = await gq.getMultipleHopPaths(getGraphEndPoint(), getQueryFn)
+        let paths = await gq.generatePermutations(getGraphEndPoint(), getQueryFn)
 		let readablePath = gq.getReadablePaths(paths)
 		fileRW.writeContents(paths, readablePath, true)
 	}
@@ -63,10 +62,10 @@ async function main() {
         let paths = workerData[1]
         let readablePath = workerData[2]
 
-        console.log("Starting worker", workerId, "with", paths.length, "paths...")
+        console.log(`Starting worker ${workerId} with ${paths.length} paths...`)
 
         while (true) {
-			console.time("Time taken " + workerId)
+			console.time(`Time taken ${workerId}`)
             for (let i = 0; i < paths.length; i++) {
                 try {
                     const pathArray = gq.getPathArray(readablePath[i].length - 1)
@@ -78,18 +77,17 @@ async function main() {
                                 ),
                                 ethers.utils.parseUnits(AMOUNT_IN.toString(), "18"),
                             ), 18
-                        ) * (0.9975 ** (readablePath[i].length)) * (1 - SLIPPAGE)
-                
-                    if (quoteValue > AMOUNT_IN * (1 + THRESHOLD)) {
-                        console.log(readablePath[i], quoteValue)
+                        ) * (0.9975 ** (readablePath[i].length - 1)) * (1 - SLIPPAGE)
+
+                    if (quoteValue > AMOUNT_IN * (1 + parseFloat(THRESHOLD))) {
+                        console.log(`Initiating swap ${readablePath[i]}. Expected swap value: ${quoteValue}`)
                         swap(WALLET, paths[i], AMOUNT_IN, quoteValue)
                     }
                 } catch(err) {
-                    console.log(err)
-                    process.exit()
+                    console.log(err.code)
                 }
             }
-			console.timeEnd("Time taken " + workerId)
+			console.timeEnd(`Time taken ${workerId}`)
         }
     }	
 };
@@ -117,7 +115,7 @@ async function swap(wallet, path, amountIn, expectedAmount) {
 	amountIn = ethers.utils.parseUnits(amountIn.toString(), 18)
 	
     try {
-        const tx = await swapContract.exactInput(
+        const tx = await SWAP_CONTRACT.exactInput(
 			{
 				path: HEX_DATA,
 				recipient: WALLET_ADDRESS,
@@ -166,7 +164,7 @@ function getQueryFn(iteration, size) {
     return `
     {
         liquidityPools(
-            first: ${size * (iteration + 1)}, 
+            first: ${size}, 
             orderBy: cumulativeSwapCount,
             orderDirection: desc,
             skip: ${size * iteration}
